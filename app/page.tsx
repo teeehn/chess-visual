@@ -159,7 +159,7 @@ export default function Home() {
   };
 
   return (
-    <div className="max-w-2xl mr-auto ml-auto p-4">
+    <div className="max-w-2xl lg:max-w-4xl mr-auto ml-auto p-4">
       <h1 className="text-xl font-semibold mb-4">Chess Game Visualizer</h1>
 
       {!fileName && (
@@ -205,37 +205,39 @@ export default function Home() {
             a placeholder for the next phase.
           </p>
         </div>
-      : <>
-          <p className="text-center text-sm font-medium mt-4 mb-2">
-            {currentMoveLabel && `${currentMoveLabel} `}
-            {statusText}
-          </p>
-          <div className="max-w-md mr-auto ml-auto mb-4">
-            <Chessboard options={chessboardOptions} />
-          </div>
+      : <div className="lg:flex lg:items-start lg:gap-6">
+          <div className="lg:flex-1">
+            <p className="text-center text-sm font-medium mt-4 mb-2">
+              {currentMoveLabel && `${currentMoveLabel} `}
+              {statusText}
+            </p>
+            <div className="max-w-md mr-auto ml-auto mb-4">
+              <Chessboard options={chessboardOptions} />
+            </div>
 
-          <div className="flex items-center gap-2 justify-center mb-4">
-            <button onClick={goToStart} disabled={!canGoBack}>
-              |&lt;
-            </button>
-            <button onClick={goBack} disabled={!canGoBack}>
-              &lt; Prev
-            </button>
-            <span className="px-2 text-sm">
-              {currentMove ?
-                `Move ${currentMove.moveNumber} / ${totalMoveNumber}`
-              : "Start"}
-            </span>
-            <button onClick={goForward} disabled={!canGoForward}>
-              Next &gt;
-            </button>
-            <button onClick={goToEnd} disabled={!canGoForward}>
-              &gt;|
-            </button>
+            <div className="flex items-center gap-2 justify-center mb-4">
+              <button onClick={goToStart} disabled={!canGoBack}>
+                |&lt;
+              </button>
+              <button onClick={goBack} disabled={!canGoBack}>
+                &lt; Prev
+              </button>
+              <span className="px-2 text-sm">
+                {currentMove ?
+                  `Move ${currentMove.moveNumber} / ${totalMoveNumber}`
+                : "Start"}
+              </span>
+              <button onClick={goForward} disabled={!canGoForward}>
+                Next &gt;
+              </button>
+              <button onClick={goToEnd} disabled={!canGoForward}>
+                &gt;|
+              </button>
+            </div>
           </div>
 
           {moves.length > 0 && (
-            <div className="grid grid-cols-2 gap-1 text-sm">
+            <div className="grid grid-cols-2 gap-1 text-sm lg:w-64 lg:flex-shrink-0 lg:max-h-[600px] lg:overflow-y-auto">
               {moves.map((m, i) => (
                 <button
                   key={i}
@@ -250,7 +252,7 @@ export default function Home() {
               ))}
             </div>
           )}
-        </>
+        </div>
       }
     </div>
   );
