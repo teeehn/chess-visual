@@ -59,10 +59,19 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pgn: text }),
       });
+      // The route's own error cases (malformed PGN, no moves) are still
+      // valid ParsePgnResult bodies with a real .error message, on a 400 —
+      // that's the common case, so status alone can't gate whether to
+      // trust the body. Only guard against a body that doesn't even match
+      // the expected shape (e.g. something in front of the route, like a
+      // proxy, returning an unrelated error page).
       const result: ParsePgnResult = await response.json();
 
       if (!result.ok) {
-        resetToFailed(result.error);
+        resetToFailed(
+          result.error ||
+            "The PGN parsing service returned an unexpected response.",
+        );
         return;
       }
 

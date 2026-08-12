@@ -43,4 +43,23 @@ describe("PGN upload", () => {
     expect(await screen.findByText("Loaded: good.pgn")).toBeInTheDocument();
     expect(screen.queryByText(/Could not parse PGN/)).not.toBeInTheDocument();
   });
+
+  it("shows a fallback message instead of a blank error for a malformed response body", async () => {
+    // Simulates something in front of the route (a proxy, say) returning a
+    // response that isn't shaped like ParsePgnResult at all — result.ok is
+    // falsy but result.error is also undefined, so the code must not just
+    // display `undefined` to the user.
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+
+    render(<Home />);
+    await uploadFile(makePgnFile("1. e4 e5 1-0", "game.pgn"));
+
+    expect(
+      await screen.findByText(
+        "The PGN parsing service returned an unexpected response.",
+      ),
+    ).toBeInTheDocument();
+  });
 });
