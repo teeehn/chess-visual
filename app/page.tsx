@@ -302,15 +302,24 @@ export default function Home() {
             a placeholder for the next phase.
           </p>
         </div>
-      : <div className="lg:flex lg:items-start lg:gap-6">
-          <div className="lg:flex-1">
-            <p className="text-center text-sm font-medium mt-4 mb-2">
+      : <>
+          {/* Own row (not inside the items-start row below) so the status
+              text doesn't push the board down relative to the move list
+              sidebar. The spacer matches the sidebar's width so the text
+              still centers over the board column, not the full row. */}
+          <div className="lg:flex lg:gap-6">
+            <p className="lg:flex-1 text-center text-sm font-medium mt-4 mb-2">
               {currentMoveLabel && `${currentMoveLabel} `}
               {statusText}
             </p>
-            <div className="max-w-md mr-auto ml-auto mb-4">
-              <Chessboard options={chessboardOptions} />
-            </div>
+            <div className="hidden lg:block lg:w-64 lg:flex-shrink-0" />
+          </div>
+
+          <div className="lg:flex lg:items-start lg:gap-6">
+            <div className="lg:flex-1">
+              <div className="max-w-md mr-auto ml-auto mb-4">
+                <Chessboard options={chessboardOptions} />
+              </div>
 
             {/* Width-matched to the nav row below via the shared w-fit
                 wrapper — the mobile move list stretches to fill whatever
@@ -349,7 +358,8 @@ export default function Home() {
               {moveListButtons}
             </div>
           )}
-        </div>
+          </div>
+        </>
       }
     </div>
   );
