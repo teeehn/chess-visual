@@ -147,6 +147,8 @@ export default function Home() {
   const sideToMove =
     !currentMove || currentMove.color === "b" ? "White" : "Black";
   const isAtLastMove = moves.length > 0 && currentPly === moves.length - 1;
+  const totalMoveNumber =
+    moves.length > 0 ? moves[moves.length - 1].moveNumber : 0;
   const statusText =
     isAtLastMove && gameEndText ? gameEndText : `${sideToMove} to move`;
 
@@ -220,9 +222,9 @@ export default function Home() {
               &lt; Prev
             </button>
             <span className="px-2 text-sm">
-              {currentPly === -1 ?
-                "Start"
-              : `Move ${currentPly + 1} / ${moves.length}`}
+              {currentMove ?
+                `Move ${currentMove.moveNumber} / ${totalMoveNumber}`
+              : "Start"}
             </span>
             <button onClick={goForward} disabled={!canGoForward}>
               Next &gt;
