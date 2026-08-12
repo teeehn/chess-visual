@@ -1,8 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import Home from "@/app/page";
-import { makePgnFile, uploadFile } from "../test-utils";
+import { makePgnFile, mockParsePgnFetch, uploadFile } from "../test-utils";
 
 describe("PGN metadata panel", () => {
+  beforeEach(() => mockParsePgnFetch());
+
   it("displays populated header tags", async () => {
     const pgn = `[Event "World Championship 25th"]
 [Site "Moscow"]

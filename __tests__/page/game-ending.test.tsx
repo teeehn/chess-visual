@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Home from "@/app/page";
-import { makePgnFile, uploadFile } from "../test-utils";
+import { makePgnFile, mockParsePgnFetch, uploadFile } from "../test-utils";
 
 const OPERA_GAME = `[Event "Paris"]
 [White "Paul Morphy"]
@@ -13,6 +13,7 @@ const OPERA_GAME = `[Event "Paris"]
 14. Rd1 Qe6 15. Bxd7+ Nxd7 16. Qb8+ Nxb8 17. Rd8# 1-0`;
 
 async function loadGameAtEnd(pgn: string) {
+  mockParsePgnFetch();
   const user = userEvent.setup();
   render(<Home />);
   await uploadFile(makePgnFile(pgn, "game.pgn"));

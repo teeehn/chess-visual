@@ -1,11 +1,12 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Home from "@/app/page";
-import { makePgnFile, uploadFile } from "../test-utils";
+import { makePgnFile, mockParsePgnFetch, uploadFile } from "../test-utils";
 
 const GAME = "1. e4 e5 2. Nf3 Nc6 3. Bb5 1-0";
 
 async function loadGame() {
+  mockParsePgnFetch();
   render(<Home />);
   await uploadFile(makePgnFile(GAME, "game.pgn"));
   await screen.findByText("Loaded: game.pgn");
