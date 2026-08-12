@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import { extractMetadata, type MetadataEntry } from "@/lib/pgn-metadata";
+import { describeGameEnding } from "@/lib/game-ending";
 
 const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -15,19 +16,6 @@ type PlyMove = {
 
 function isImageFile(file: File) {
   return file.type.startsWith("image/") || /\.(heic|heif)$/i.test(file.name);
-}
-
-function describeGameEnding(chess: Chess, result?: string | null) {
-  if (chess.isCheckmate()) return "Checkmate";
-  if (chess.isStalemate()) return "Stalemate";
-  if (chess.isInsufficientMaterial()) return "Draw by insufficient material";
-  if (chess.isThreefoldRepetition()) return "Draw by repetition";
-  if (chess.isDrawByFiftyMoves()) return "Draw by the 50-move rule";
-
-  if (result === "1/2-1/2") return "Draw";
-  if (result === "1-0") return "Black resigns";
-  if (result === "0-1") return "White resigns";
-  return null;
 }
 
 export default function Home() {
