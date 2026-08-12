@@ -231,6 +231,19 @@ export default function Home() {
     id: "pgn-replay",
   };
 
+  const moveListButtons = moves.map((m, i) => (
+    <button
+      key={i}
+      onClick={() => setCurrentPly(i)}
+      className={`text-left px-1 rounded ${
+        i === currentPly ? "bg-blue-200" : "hover:bg-gray-100"
+      }`}
+    >
+      {m.color === "w" ? `${m.moveNumber}. ` : ""}
+      {m.san}
+    </button>
+  ));
+
   return (
     <div className="max-w-2xl lg:max-w-4xl mr-auto ml-auto p-4">
       <h1 className="text-xl font-semibold mb-4">Chess Game Visualizer</h1>
@@ -299,41 +312,41 @@ export default function Home() {
               <Chessboard options={chessboardOptions} />
             </div>
 
-            <div className="flex items-center gap-2 justify-center mb-4">
-              <button onClick={goToStart} disabled={!canGoBack}>
-                |&lt;
-              </button>
-              <button onClick={goBack} disabled={!canGoBack}>
-                &lt; Prev
-              </button>
-              <span className="px-2 text-sm">
-                {currentMove ?
-                  `Move ${currentMove.moveNumber} / ${totalMoveNumber}`
-                : "Start"}
-              </span>
-              <button onClick={goForward} disabled={!canGoForward}>
-                Next &gt;
-              </button>
-              <button onClick={goToEnd} disabled={!canGoForward}>
-                &gt;|
-              </button>
+            {/* Width-matched to the nav row below via the shared w-fit
+                wrapper — the mobile move list stretches to fill whatever
+                width the nav row's own content naturally needs. */}
+            <div className="w-fit mx-auto">
+              <div className="flex items-center gap-2 mb-4">
+                <button onClick={goToStart} disabled={!canGoBack}>
+                  |&lt;
+                </button>
+                <button onClick={goBack} disabled={!canGoBack}>
+                  &lt; Prev
+                </button>
+                <span className="px-2 text-sm">
+                  {currentMove ?
+                    `Move ${currentMove.moveNumber} / ${totalMoveNumber}`
+                  : "Start"}
+                </span>
+                <button onClick={goForward} disabled={!canGoForward}>
+                  Next &gt;
+                </button>
+                <button onClick={goToEnd} disabled={!canGoForward}>
+                  &gt;|
+                </button>
+              </div>
+
+              {moves.length > 0 && (
+                <div className="grid grid-cols-2 gap-1 text-sm w-full lg:hidden">
+                  {moveListButtons}
+                </div>
+              )}
             </div>
           </div>
 
           {moves.length > 0 && (
-            <div className="grid grid-cols-2 gap-1 text-sm lg:w-64 lg:flex-shrink-0 lg:max-h-[600px] lg:overflow-y-auto">
-              {moves.map((m, i) => (
-                <button
-                  key={i}
-                  onClick={() => setCurrentPly(i)}
-                  className={`text-left px-1 rounded ${
-                    i === currentPly ? "bg-blue-200" : "hover:bg-gray-100"
-                  }`}
-                >
-                  {m.color === "w" ? `${m.moveNumber}. ` : ""}
-                  {m.san}
-                </button>
-              ))}
+            <div className="hidden lg:grid grid-cols-2 gap-1 text-sm w-64 flex-shrink-0 max-h-[600px] overflow-y-auto">
+              {moveListButtons}
             </div>
           )}
         </div>
