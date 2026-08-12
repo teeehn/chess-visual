@@ -16,12 +16,26 @@ function isImageFile(file: File) {
   return file.type.startsWith("image/") || /\.(heic|heif)$/i.test(file.name);
 }
 
+function describeGameEnding(chess: Chess, result?: string | null) {
+  if (chess.isCheckmate()) return "Checkmate";
+  if (chess.isStalemate()) return "Stalemate";
+  if (chess.isInsufficientMaterial()) return "Draw by insufficient material";
+  if (chess.isThreefoldRepetition()) return "Draw by repetition";
+  if (chess.isDrawByFiftyMoves()) return "Draw by the 50-move rule";
+
+  if (result === "1/2-1/2") return "Draw";
+  if (result === "1-0") return "Black resigns";
+  if (result === "0-1") return "White resigns";
+  return null;
+}
+
 export default function Home() {
   const [moves, setMoves] = useState<PlyMove[]>([]);
   const [currentPly, setCurrentPly] = useState(-1); // -1 = starting position
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [gameEndText, setGameEndText] = useState<string | null>(null);
 
   const canGoBack = currentPly > -1;
   const canGoForward = currentPly < moves.length - 1;
@@ -64,16 +78,19 @@ export default function Home() {
         setMoves([]);
         setCurrentPly(-1);
         setFileName(null);
+        setGameEndText(null);
         return;
       }
 
       setMoves(parsed);
-      setCurrentPly(parsed.length - 1);
+      setCurrentPly(-1);
       setFileName(file.name);
+      setGameEndText(describeGameEnding(chess, chess.header().Result));
     } catch (err) {
       setMoves([]);
       setCurrentPly(-1);
       setFileName(null);
+      setGameEndText(null);
       setError(
         err instanceof Error ?
           `Could not parse PGN: ${err.message}`
@@ -87,6 +104,7 @@ export default function Home() {
     setMoves([]);
     setCurrentPly(-1);
     setFileName(file.name);
+    setGameEndText(null);
     setImagePreviewUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
       return URL.createObjectURL(file);
@@ -121,6 +139,16 @@ export default function Home() {
 
   const currentFen =
     currentPly === -1 ? START_FEN : (moves[currentPly]?.fen ?? START_FEN);
+
+  const currentMove = currentPly === -1 ? null : moves[currentPly];
+  const currentMoveLabel =
+    currentMove &&
+    `${currentMove.moveNumber}${currentMove.color === "w" ? "." : "..."} ${currentMove.san}`;
+  const sideToMove =
+    !currentMove || currentMove.color === "b" ? "White" : "Black";
+  const isAtLastMove = moves.length > 0 && currentPly === moves.length - 1;
+  const statusText =
+    isAtLastMove && gameEndText ? gameEndText : `${sideToMove} to move`;
 
   const chessboardOptions = {
     position: currentFen,
@@ -176,7 +204,11 @@ export default function Home() {
           </p>
         </div>
       : <>
-          <div className="max-w-md mr-auto ml-auto mb-4 mt-4">
+          <p className="text-center text-sm font-medium mt-4 mb-2">
+            {currentMoveLabel && `${currentMoveLabel} `}
+            {statusText}
+          </p>
+          <div className="max-w-md mr-auto ml-auto mb-4">
             <Chessboard options={chessboardOptions} />
           </div>
 
