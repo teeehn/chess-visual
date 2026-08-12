@@ -1,8 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import Home from "@/app/page";
-import { makePgnFile, uploadFile } from "../test-utils";
+import { makePgnFile, mockParsePgnFetch, uploadFile } from "../test-utils";
 
 describe("PGN upload", () => {
+  beforeEach(() => mockParsePgnFetch());
+
   it("loads a valid PGN and starts at the pre-move position", async () => {
     render(<Home />);
     await uploadFile(makePgnFile("1. e4 e5 2. Nf3 Nc6 1-0", "game.pgn"));

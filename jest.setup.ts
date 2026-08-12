@@ -20,19 +20,21 @@ if (typeof Blob !== "undefined" && !Blob.prototype.text) {
 // size from it to compute piece-move animations and throws if it comes
 // back falsy. Stub a plausible fixed square size so navigating between
 // positions in tests doesn't hit that guard.
-Element.prototype.getBoundingClientRect = function () {
-  return {
-    width: 60,
-    height: 60,
-    top: 0,
-    left: 0,
-    right: 60,
-    bottom: 60,
-    x: 0,
-    y: 0,
-    toJSON() {},
-  } as DOMRect;
-};
+if (typeof Element !== "undefined") {
+  Element.prototype.getBoundingClientRect = function () {
+    return {
+      width: 60,
+      height: 60,
+      top: 0,
+      left: 0,
+      right: 60,
+      bottom: 60,
+      x: 0,
+      y: 0,
+      toJSON() {},
+    } as DOMRect;
+  };
+}
 
 // jsdom doesn't implement the Blob URL registry at all. App code uses these
 // for image-scoresheet previews; tests don't need a real usable URL, just

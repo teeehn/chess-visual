@@ -3,6 +3,7 @@ import Home from "@/app/page";
 import {
   makeImageFile,
   makePgnFile,
+  mockParsePgnFetch,
   uploadFile,
 } from "../test-utils";
 
@@ -36,6 +37,7 @@ describe("image upload", () => {
   });
 
   it("switches cleanly from an image back to a PGN game", async () => {
+    mockParsePgnFetch();
     render(<Home />);
     await uploadFile(makeImageFile("scoresheet.png"));
     await screen.findByAltText("Uploaded scoresheet");

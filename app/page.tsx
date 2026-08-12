@@ -1,18 +1,10 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
-import { extractMetadata, type MetadataEntry } from "@/lib/pgn-metadata";
-import { describeGameEnding } from "@/lib/game-ending";
+import type { MetadataEntry } from "@/lib/pgn-metadata";
+import type { PlyMove, ParsePgnResult } from "@/lib/parse-pgn";
 
 const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
-type PlyMove = {
-  san: string;
-  fen: string;
-  moveNumber: number;
-  color: "w" | "b";
-};
 
 function isImageFile(file: File) {
   return file.type.startsWith("image/") || /\.(heic|heif)$/i.test(file.name);
@@ -50,45 +42,37 @@ export default function Home() {
       if (prev) URL.revokeObjectURL(prev);
       return null;
     });
-    try {
-      const text = await file.text();
-      const chess = new Chess();
-      chess.loadPgn(text);
 
-      const history = chess.history({ verbose: true });
-      const parsed: PlyMove[] = history.map((m, i) => ({
-        san: m.san,
-        fen: m.after,
-        moveNumber: Math.floor(i / 2) + 1,
-        color: m.color,
-      }));
-
-      if (parsed.length === 0) {
-        setError("No moves found in this PGN.");
-        setMoves([]);
-        setCurrentPly(-1);
-        setFileName(null);
-        setGameEndText(null);
-        setMetadata([]);
-        return;
-      }
-
-      setMoves(parsed);
-      setCurrentPly(-1);
-      setFileName(file.name);
-      setGameEndText(describeGameEnding(chess, chess.header().Result));
-      setMetadata(extractMetadata(chess));
-    } catch (err) {
+    function resetToFailed(message: string) {
       setMoves([]);
       setCurrentPly(-1);
       setFileName(null);
       setGameEndText(null);
       setMetadata([]);
-      setError(
-        err instanceof Error ?
-          `Could not parse PGN: ${err.message}`
-        : "Could not parse PGN.",
-      );
+      setError(message);
+    }
+
+    try {
+      const text = await file.text();
+      const response = await fetch("/api/parse-pgn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pgn: text }),
+      });
+      const result: ParsePgnResult = await response.json();
+
+      if (!result.ok) {
+        resetToFailed(result.error);
+        return;
+      }
+
+      setMoves(result.moves);
+      setCurrentPly(-1);
+      setFileName(file.name);
+      setGameEndText(result.gameEndText);
+      setMetadata(result.metadata);
+    } catch {
+      resetToFailed("Could not reach the PGN parsing service.");
     }
   }, []);
 
