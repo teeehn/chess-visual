@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Chessboard } from "react-chessboard";
 import type { MetadataEntry } from "@/lib/pgn-metadata";
 import type { PlyMove, ParsePgnResult } from "@/lib/parse-pgn";
+import type { ParseImageResult } from "@/lib/parse-image";
 
 const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -18,6 +19,7 @@ export default function Home() {
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [gameEndText, setGameEndText] = useState<string | null>(null);
   const [metadata, setMetadata] = useState<MetadataEntry[]>([]);
+  const [isProcessingImage, setIsProcessingImage] = useState(false);
 
   const canGoBack = currentPly > -1;
   const canGoForward = currentPly < moves.length - 1;
@@ -36,67 +38,117 @@ export default function Home() {
     [moves.length],
   );
 
-  const handleFile = useCallback(async (file: File) => {
-    setError(null);
-    setImagePreviewUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return null;
-    });
-
-    function resetToFailed(message: string) {
-      setMoves([]);
-      setCurrentPly(-1);
-      setFileName(null);
-      setGameEndText(null);
-      setMetadata([]);
-      setError(message);
-    }
-
-    try {
-      const text = await file.text();
-      const response = await fetch("/api/parse-pgn", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pgn: text }),
-      });
-      // The route's own error cases (malformed PGN, no moves) are still
-      // valid ParsePgnResult bodies with a real .error message, on a 400 —
-      // that's the common case, so status alone can't gate whether to
-      // trust the body. Only guard against a body that doesn't even match
-      // the expected shape (e.g. something in front of the route, like a
-      // proxy, returning an unrelated error page).
-      const result: ParsePgnResult = await response.json();
-
-      if (!result.ok) {
-        resetToFailed(
-          result.error ||
-            "The PGN parsing service returned an unexpected response.",
-        );
-        return;
-      }
-
-      setMoves(result.moves);
-      setCurrentPly(-1);
-      setFileName(file.name);
-      setGameEndText(result.gameEndText);
-      setMetadata(result.metadata);
-    } catch {
-      resetToFailed("Could not reach the PGN parsing service.");
-    }
-  }, []);
-
-  const handleImage = useCallback((file: File) => {
-    setError(null);
+  function resetToFailed(message: string) {
     setMoves([]);
     setCurrentPly(-1);
-    setFileName(file.name);
+    setFileName(null);
     setGameEndText(null);
     setMetadata([]);
-    setImagePreviewUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return URL.createObjectURL(file);
-    });
-  }, []);
+    setError(message);
+  }
+
+  // Shared by both upload paths: given PGN text (read from a .pgn file, or
+  // recognized from an image by /api/parse-image), validate/parse it via
+  // /api/parse-pgn and load the result. An image upload that successfully
+  // recognizes a game ends up rendered exactly like a direct .pgn upload —
+  // no separate move-parsing logic for images.
+  const loadPgnText = useCallback(
+    async (pgnText: string, sourceFileName: string) => {
+      try {
+        const response = await fetch("/api/parse-pgn", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pgn: pgnText }),
+        });
+        // The route's own error cases (malformed PGN, no moves) are still
+        // valid ParsePgnResult bodies with a real .error message, on a 400 —
+        // that's the common case, so status alone can't gate whether to
+        // trust the body. Only guard against a body that doesn't even match
+        // the expected shape (e.g. something in front of the route, like a
+        // proxy, returning an unrelated error page).
+        const result: ParsePgnResult = await response.json();
+
+        if (!result.ok) {
+          resetToFailed(
+            result.error ||
+              "The PGN parsing service returned an unexpected response.",
+          );
+          return;
+        }
+
+        setMoves(result.moves);
+        setCurrentPly(-1);
+        setFileName(sourceFileName);
+        setGameEndText(result.gameEndText);
+        setMetadata(result.metadata);
+        setImagePreviewUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return null;
+        });
+      } catch {
+        resetToFailed("Could not reach the PGN parsing service.");
+      }
+    },
+    [],
+  );
+
+  const handleFile = useCallback(
+    async (file: File) => {
+      setError(null);
+      setImagePreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      try {
+        const text = await file.text();
+        await loadPgnText(text, file.name);
+      } catch {
+        resetToFailed("Could not read the uploaded file.");
+      }
+    },
+    [loadPgnText],
+  );
+
+  const handleImage = useCallback(
+    async (file: File) => {
+      setError(null);
+      setMoves([]);
+      setCurrentPly(-1);
+      setFileName(file.name);
+      setGameEndText(null);
+      setMetadata([]);
+      setImagePreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(file);
+      });
+      setIsProcessingImage(true);
+
+      try {
+        const formData = new FormData();
+        formData.append("image", file);
+        const response = await fetch("/api/parse-image", {
+          method: "POST",
+          body: formData,
+        });
+        const result: ParseImageResult = await response.json();
+
+        if (!result.ok) {
+          setError(
+            result.error ||
+              "The image recognition service returned an unexpected response.",
+          );
+          return;
+        }
+
+        await loadPgnText(result.pgn, file.name);
+      } catch {
+        setError("Could not reach the image recognition service.");
+      } finally {
+        setIsProcessingImage(false);
+      }
+    },
+    [loadPgnText],
+  );
 
   useEffect(() => {
     return () => {
@@ -210,10 +262,12 @@ export default function Home() {
             alt="Uploaded scoresheet"
             className="max-w-md mx-auto rounded border border-gray-200"
           />
-          <p className="text-sm text-gray-500 text-center mt-2">
-            Image scoresheet recognition isn&apos;t implemented yet — this is
-            a placeholder for the next phase.
-          </p>
+          {isProcessingImage && (
+            <p className="text-sm text-gray-500 text-center mt-2">
+              Recognizing handwriting… this can take up to a minute on the
+              first request.
+            </p>
+          )}
         </div>
       : <>
           {/* Own row (not inside the items-start row below) so the status
