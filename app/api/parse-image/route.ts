@@ -22,5 +22,5 @@ export async function POST(request: Request) {
   }
 
   const result = await parseImage(image);
-  return NextResponse.json(result, { status: result.ok ? 200 : 501 });
+  return NextResponse.json(result, { status: result.ok ? 200 : 400 });
 }

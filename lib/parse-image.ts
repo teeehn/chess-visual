@@ -1,13 +1,48 @@
-export type ParseImageResult = { ok: true; pgn: string } | { ok: false; error: string };
+import { pipeline } from "@huggingface/transformers";
+import { parsePgn } from "./parse-pgn";
 
-/**
- * Stub for future OCR/handwriting-recognition work (see project notes on
- * TrOCR + legal-move validation). Establishes the function/route contract
- * an eventual implementation will fill in — not implemented yet.
- */
+export type ParseImageResult =
+  | { ok: true; pgn: string }
+  | { ok: false; error: string };
+
+// TrOCR, handwriting-tuned variant. It's a single-line HTR model — it
+// reads one line of text per call, not a structured multi-row/column
+// layout. Run directly on a full scoresheet photo, it will transcribe
+// *something* but won't understand rows/columns, so recognized text
+// generally won't parse as a real game yet. Segmenting a scoresheet into
+// per-move crops before recognizing each one is future work (see README).
+const MODEL_ID = "Xenova/trocr-small-handwritten";
+
+type OcrPipeline = Awaited<ReturnType<typeof pipeline<"image-to-text">>>;
+
+// Loading the model is expensive (downloads/initializes weights) — do it
+// once per server process and reuse it, not per request.
+let ocrPipelinePromise: Promise<OcrPipeline> | null = null;
+
+function getOcrPipeline(): Promise<OcrPipeline> {
+  if (!ocrPipelinePromise) {
+    ocrPipelinePromise = pipeline("image-to-text", MODEL_ID);
+  }
+  return ocrPipelinePromise;
+}
+
 export async function parseImage(image: Blob): Promise<ParseImageResult> {
-  return {
-    ok: false,
-    error: `Image scoresheet recognition is not implemented yet (received a ${image.type || "unknown"} file, ${image.size} bytes).`,
-  };
+  const ocr = await getOcrPipeline();
+  const output = await ocr(image);
+  const result = Array.isArray(output) ? output[0] : output;
+  const recognizedText = result?.generated_text?.trim() ?? "";
+
+  if (!recognizedText) {
+    return { ok: false, error: "Could not recognize any text in the image." };
+  }
+
+  const parsed = parsePgn(recognizedText);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      error: `Recognized text doesn't form a valid game yet (recognized: "${recognizedText}"). ${parsed.error}`,
+    };
+  }
+
+  return { ok: true, pgn: recognizedText };
 }
