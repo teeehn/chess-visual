@@ -65,6 +65,24 @@ export function bestLegalMoveMatch(
 
 const PGN_RESULT_TOKENS = new Set(["1-0", "0-1", "1/2-1/2", "*"]);
 
+// The scoresheet template's own header fields (Event/Date/Round/Board/
+// Section/Time Control/player Name+Rating boxes), mapped to their PGN tag
+// names. Anything recognized outside this set is dropped rather than
+// written into the PGN — this is specifically for fields the physical
+// sheet has a box for, not an open channel for arbitrary tags.
+const RECOGNIZABLE_HEADER_TAGS = new Set([
+  "Event",
+  "Date",
+  "Round",
+  "Board",
+  "Section",
+  "TimeControl",
+  "White",
+  "Black",
+  "WhiteElo",
+  "BlackElo",
+]);
+
 // Walks recognized cells in play order (1w, 1b, 2w, 2b, ...), matching each
 // against the legal moves at the position reached so far, and stops at the
 // first cell that doesn't confidently match anything — which naturally
@@ -78,9 +96,15 @@ const PGN_RESULT_TOKENS = new Set(["1-0", "0-1", "1/2-1/2", "*"]);
 // often isn't something the move list alone implies. Anything that isn't
 // one of the four PGN result tokens is ignored rather than trusted, since
 // it's more likely a misread than a valid but unusual value.
+//
+// headers is optional, separately-recognized text for the sheet's other
+// header fields (Event, Date, Round, player names/ratings, etc.) — see
+// RECOGNIZABLE_HEADER_TAGS. Blank entries are skipped rather than written
+// as empty tags.
 export function assembleGameFromRecognizedCells(
   cells: RecognizedCell[],
   result?: string,
+  headers?: Record<string, string>,
 ): AssembledGame {
   const chess = new Chess();
   let movesRecognized = 0;
@@ -95,6 +119,13 @@ export function assembleGameFromRecognizedCells(
 
   if (result && PGN_RESULT_TOKENS.has(result)) {
     chess.setHeader("Result", result);
+  }
+
+  for (const [tag, value] of Object.entries(headers ?? {})) {
+    const trimmed = value?.trim();
+    if (trimmed && RECOGNIZABLE_HEADER_TAGS.has(tag)) {
+      chess.setHeader(tag, trimmed);
+    }
   }
 
   return { pgn: chess.pgn(), movesRecognized };

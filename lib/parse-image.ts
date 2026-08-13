@@ -21,16 +21,26 @@ const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models
 
 const RECOGNITION_PROMPT =
   "This is a photo of a handwritten chess scoresheet. Read the moves " +
-  "recorded in the White and Black columns, in order, and the game " +
-  'result if the sheet has a filled-in "RESULT" box or similar (however ' +
-  "it's marked on the sheet — checkboxes, fractions, a written score). " +
-  'Respond with ONLY a JSON object of the form {"moves": ["e4","e5","Nf3"], ' +
-  '"result": "1-0"} and nothing else. The result field must be exactly ' +
-  'one of "1-0", "0-1", "1/2-1/2", or "*" (use "*" if it\'s blank or not ' +
-  "legible) — translate whatever notation the sheet uses into one of " +
-  "those four.";
+  "recorded in the White and Black columns, in order, and any other " +
+  "filled-in fields on the sheet: the game result (however it's marked " +
+  "— checkboxes, fractions, a written score), event name, date, round " +
+  "number, board number, section, time control, the two players' names, " +
+  "and their ratings. Leave out anything that's blank or illegible " +
+  'rather than guessing. Respond with ONLY a JSON object of the form ' +
+  '{"moves": ["e4","e5","Nf3"], "result": "1-0", "headers": {"Round": "3", ' +
+  '"White": "Smith, John", "WhiteElo": "1850"}} and nothing else — omit ' +
+  "any header key you didn't find on the sheet, don't include one with an " +
+  'empty value. The result field must be exactly one of "1-0", "0-1", ' +
+  '"1/2-1/2", or "*" (use "*" if blank/illegible) — translate whatever ' +
+  "notation the sheet uses into one of those four. The headers object's " +
+  "keys must be exactly one of: Event, Date, Round, Board, Section, " +
+  "TimeControl, White, Black, WhiteElo, BlackElo.";
 
-type RecognizedGame = { moves: string[]; result: string | null };
+type RecognizedGame = {
+  moves: string[];
+  result: string | null;
+  headers: Record<string, string>;
+};
 
 async function recognizeGame(
   imageBuffer: Buffer,
@@ -102,7 +112,21 @@ async function recognizeGame(
     (parsed as { result?: unknown }).result
   );
 
-  return { moves, result: typeof result === "string" ? result : null };
+  const rawHeaders = Array.isArray(parsed) ? null : (
+    (parsed as { headers?: unknown }).headers
+  );
+  const headers: Record<string, string> = {};
+  if (rawHeaders && typeof rawHeaders === "object") {
+    for (const [key, value] of Object.entries(rawHeaders)) {
+      if (typeof value === "string") headers[key] = value;
+    }
+  }
+
+  return {
+    moves,
+    result: typeof result === "string" ? result : null,
+    headers,
+  };
 }
 
 export async function parseImage(image: Blob): Promise<ParseImageResult> {
@@ -129,6 +153,7 @@ export async function parseImage(image: Blob): Promise<ParseImageResult> {
   const { pgn, movesRecognized } = assembleGameFromRecognizedCells(
     cells,
     game.result ?? undefined,
+    game.headers,
   );
 
   if (movesRecognized === 0) {

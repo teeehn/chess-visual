@@ -76,6 +76,32 @@ describe("parseImage", () => {
     expect(result.pgn).toContain('[Result "*"]');
   });
 
+  it("recognizes other header fields from the sheet, not just moves and result", async () => {
+    mockGeminiResponse(
+      '{"moves":["c4","Nf6"],"result":"1/2-1/2","headers":' +
+        '{"Round":"21","Event":"World Championship 25th"}}',
+    );
+
+    const result = await parseImage(REAL_IMAGE_BLOB);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.pgn).toContain('[Round "21"]');
+    expect(result.pgn).toContain('[Event "World Championship 25th"]');
+  });
+
+  it("drops a recognized header key that isn't one of the sheet's real fields", async () => {
+    mockGeminiResponse(
+      '{"moves":["c4","Nf6"],"headers":{"NotARealTag":"garbage"}}',
+    );
+
+    const result = await parseImage(REAL_IMAGE_BLOB);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.pgn).not.toContain("NotARealTag");
+  });
+
   it("corrects near-miss readings via legal-move matching", async () => {
     // Same real near-misses validated in recognize-scoresheet.test.ts.
     mockGeminiResponse('["c4-","Nf6","NF3"]');
