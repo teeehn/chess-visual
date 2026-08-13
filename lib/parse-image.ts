@@ -16,7 +16,16 @@ export type ParseImageResult =
 // correctly in one call, versus a local CPU-run vision model (MiniCPM-V
 // via Ollama) which took ~5 minutes and got only the first two moves
 // right before diverging.
-const GEMINI_MODEL = "gemini-flash-latest";
+//
+// "-lite" over the full "gemini-flash-latest": the full model's free-tier
+// quota for this project is a mere 20 requests/day (hit during testing,
+// confirmed via the API's own RESOURCE_EXHAUSTED error body) — nowhere
+// near enough for real use. The lite model has separate, less-exhausted
+// quota, and on the real fixture was both faster (~3s vs ~10s+, likely
+// because it skips the full model's extended "thinking" step by default)
+// and matched it exactly, including the result — no accuracy tradeoff
+// observed here.
+const GEMINI_MODEL = "gemini-flash-lite-latest";
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 const RECOGNITION_PROMPT =
