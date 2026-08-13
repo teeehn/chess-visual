@@ -42,6 +42,36 @@ type RecognizedGame = {
   headers: Record<string, string>;
 };
 
+// Gemini's free tier intermittently returns 503 ("model overloaded") even
+// with no rate-limit issue on our end — observed in practice on back-to-
+// back requests after an idle gap. 429 (rate limited) is the other case
+// worth a short wait rather than failing immediately. Other error codes
+// (4xx like a bad request, or a persistent 5xx) aren't retried — a retry
+// wouldn't fix them.
+const RETRYABLE_STATUS_CODES = new Set([429, 503]);
+const RETRY_DELAYS_MS = [500, 1500];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchGeminiWithRetry(
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  let response: Response;
+  for (let attempt = 0; ; attempt++) {
+    response = await fetch(url, init);
+    if (response.ok || !RETRYABLE_STATUS_CODES.has(response.status)) {
+      return response;
+    }
+    if (attempt >= RETRY_DELAYS_MS.length) {
+      return response;
+    }
+    await sleep(RETRY_DELAYS_MS[attempt]);
+  }
+}
+
 async function recognizeGame(
   imageBuffer: Buffer,
   mimeType: string,
@@ -51,25 +81,28 @@ async function recognizeGame(
     throw new Error("GEMINI_API_KEY is not configured.");
   }
 
-  const response = await fetch(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [
-            { text: RECOGNITION_PROMPT },
-            {
-              inline_data: {
-                mime_type: mimeType || "image/jpeg",
-                data: imageBuffer.toString("base64"),
+  const response = await fetchGeminiWithRetry(
+    `${GEMINI_ENDPOINT}?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              { text: RECOGNITION_PROMPT },
+              {
+                inline_data: {
+                  mime_type: mimeType || "image/jpeg",
+                  data: imageBuffer.toString("base64"),
+                },
               },
-            },
-          ],
-        },
-      ],
-    }),
-  });
+            ],
+          },
+        ],
+      }),
+    },
+  );
 
   if (!response.ok) {
     throw new Error(
