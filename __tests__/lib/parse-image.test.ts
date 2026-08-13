@@ -31,7 +31,32 @@ describe("parseImage", () => {
     jest.restoreAllMocks();
   });
 
-  it("assembles a valid PGN from a clean recognized move list", async () => {
+  it("assembles a valid PGN and Result tag from a clean recognized game", async () => {
+    mockGeminiResponse(
+      '{"moves":["c4","Nf6","Nf3","g6"],"result":"1/2-1/2"}',
+    );
+
+    const result = await parseImage(REAL_IMAGE_BLOB);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.pgn).toContain("1. c4 Nf6 2. Nf3 g6");
+    expect(result.pgn).toContain('[Result "1/2-1/2"]');
+  });
+
+  it("tolerates the response being wrapped in prose or a code fence", async () => {
+    mockGeminiResponse(
+      'Here you go:\n```json\n{"moves":["c4","Nf6"],"result":"*"}\n```',
+    );
+
+    const result = await parseImage(REAL_IMAGE_BLOB);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.pgn).toContain("1. c4 Nf6");
+  });
+
+  it("still works from a bare move array with no result field", async () => {
     mockGeminiResponse('["c4","Nf6","Nf3","g6"]');
 
     const result = await parseImage(REAL_IMAGE_BLOB);
@@ -41,14 +66,14 @@ describe("parseImage", () => {
     expect(result.pgn).toContain("1. c4 Nf6 2. Nf3 g6");
   });
 
-  it("tolerates the response being wrapped in prose or a code fence", async () => {
-    mockGeminiResponse('Here you go:\n```json\n["c4","Nf6"]\n```');
+  it("ignores a result value that isn't a valid PGN result token", async () => {
+    mockGeminiResponse('{"moves":["c4","Nf6"],"result":"White wins"}');
 
     const result = await parseImage(REAL_IMAGE_BLOB);
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.pgn).toContain("1. c4 Nf6");
+    expect(result.pgn).toContain('[Result "*"]');
   });
 
   it("corrects near-miss readings via legal-move matching", async () => {
@@ -72,7 +97,7 @@ describe("parseImage", () => {
     expect(result.error).toMatch(/Could not recognize any moves/);
   });
 
-  it("returns an error when the response isn't a JSON array", async () => {
+  it("returns an error when the response isn't JSON at all", async () => {
     mockGeminiResponse("I couldn't read this image clearly.");
 
     const result = await parseImage(REAL_IMAGE_BLOB);

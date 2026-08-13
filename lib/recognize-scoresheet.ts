@@ -63,14 +63,24 @@ export function bestLegalMoveMatch(
   return best.move;
 }
 
+const PGN_RESULT_TOKENS = new Set(["1-0", "0-1", "1/2-1/2", "*"]);
+
 // Walks recognized cells in play order (1w, 1b, 2w, 2b, ...), matching each
 // against the legal moves at the position reached so far, and stops at the
 // first cell that doesn't confidently match anything — which naturally
 // handles both "this is the end of the recorded game" (a blank cell won't
 // match) and "recognition failed here" the same way, since we can't tell
 // those apart from OCR output alone.
+//
+// result is optional, separately-recognized text for the sheet's own
+// result box (e.g. "1/2-1/2") — not derived from the final position, since
+// a scoresheet's recorded result (resignation, time forfeit, agreed draw)
+// often isn't something the move list alone implies. Anything that isn't
+// one of the four PGN result tokens is ignored rather than trusted, since
+// it's more likely a misread than a valid but unusual value.
 export function assembleGameFromRecognizedCells(
   cells: RecognizedCell[],
+  result?: string,
 ): AssembledGame {
   const chess = new Chess();
   let movesRecognized = 0;
@@ -81,6 +91,10 @@ export function assembleGameFromRecognizedCells(
     if (!match) break;
     chess.move(match);
     movesRecognized++;
+  }
+
+  if (result && PGN_RESULT_TOKENS.has(result)) {
+    chess.setHeader("Result", result);
   }
 
   return { pgn: chess.pgn(), movesRecognized };
