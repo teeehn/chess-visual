@@ -11,12 +11,12 @@
     "test:watch": "jest --watch"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
     "chess.js": "^1.4.0",
     "next": "16.3.0",
     "react": "19.2.8",
     "react-chessboard": "^5.12.0",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "sharp": "^0.35.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -39,13 +39,6 @@
   "allowScripts": {
     "chess.js@1.4.0": true,
     "fsevents@2.3.3": true,
-    "protobufjs@7.6.5": true,
-    "unrs-resolver@1.12.2": true,
-    "onnxruntime-node@1.23.0": true
-  },
-  "overrides": {
-    "sharp": "^0.35.3",
-    "adm-zip": "^0.6.0",
-    "onnxruntime-node": "1.23.0"
+    "unrs-resolver@1.12.2": true
   }
 }

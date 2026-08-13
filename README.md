@@ -13,14 +13,14 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-The first call to `/api/parse-image` downloads and initializes the OCR model (`Xenova/trocr-base-handwritten`, ~1.3GB — expect the first request to take up to a minute); it's cached in memory after that for the life of the server process, so subsequent calls are fast. The download itself is cached on disk too, but inside `node_modules/@huggingface/transformers/.cache/`, so it's wiped and re-downloaded whenever `node_modules` is reinstalled. `npm install` also needs to run a couple of postinstall scripts (native binary downloads) — if you're prompted about pending scripts, see [Dependency notes](#dependency-notes).
+`/api/parse-image` (recognizing a photographed scoresheet) calls the Gemini API and needs a `GEMINI_API_KEY` in `.env.local` — get a free key from [Google AI Studio](https://aistudio.google.com/apikey). Without one, PGN/text uploads still work; image uploads return an error. `npm install` also needs to run a couple of postinstall scripts (native binary downloads) — if you're prompted about pending scripts, see [Dependency notes](#dependency-notes).
 
 ## Usage
 
 1. **Upload a file** — click the dashed upload area and choose a `.pgn`/`.txt` file, or an image (`.png`, `.jpg`, `.heic`, etc.).
 2. **PGN files** are parsed and the game loads at the starting position, along with any header metadata the file contains (Event, Site, Date, players, ratings, ECO code, and so on — see [lib/pgn-metadata.ts](lib/pgn-metadata.ts) for the full recognized tag set). Blank or placeholder fields (chess.js's `"?"` / `"????.??.??"` defaults for tags the file never set) are hidden rather than shown.
 3. **Step through the game** using the `|<` `<` `>` `>|` buttons, the left/right arrow keys, or by clicking any move directly in the move list. The status line above the board shows the last move played and whose turn is next, and on the final move shows how the game ended (checkmate, stalemate, a specific draw reason, or resignation) instead.
-4. **Image files** show a preview and are sent for OCR recognition (this can take up to a minute on the first request — see below). If recognition produces a valid game, it loads and steps through exactly like a `.pgn` upload; if not, the recognized text and a specific error are shown so you can see what went wrong. Full-page scoresheet photos generally don't produce a valid game yet — see [Handwritten Scoresheet Recognition](#handwritten-scoresheet-recognition) for why and what's next.
+4. **Image files** show a preview and are sent for recognition (typically 5-15 seconds). If recognition produces a valid game, it loads and steps through exactly like a `.pgn` upload; if not, a specific error is shown. See [Handwritten Scoresheet Recognition](#handwritten-scoresheet-recognition) for how this works and its current accuracy.
 
 On wide screens the move list sits in a sidebar to the right of the board, top-aligned with it; on narrower screens it sits below the board, width-matched to the navigation controls.
 
@@ -41,29 +41,23 @@ Tests are organized under `__tests__/`, mirroring the source layout:
 
 - `app/page.tsx` — the client component: upload UI, board, move navigation, move list.
 - `app/api/parse-pgn/route.ts` — parses uploaded PGN text server-side and returns moves/metadata/game-ending info as JSON.
-- `app/api/parse-image/route.ts` — accepts an uploaded image and runs OCR on it server-side.
+- `app/api/parse-image/route.ts` — accepts an uploaded image and recognizes its moves server-side.
 - `lib/` — framework-agnostic logic used by both the route handlers and their tests: `parse-pgn.ts`, `pgn-metadata.ts`, `game-ending.ts`, `parse-image.ts`.
 
 PGN parsing intentionally happens server-side rather than in the browser — `page.tsx` doesn't import chess.js at all; it just posts the uploaded text to `/api/parse-pgn` and renders whatever comes back.
 
 ## Handwritten Scoresheet Recognition
 
-**Current state**: [lib/parse-image.ts](lib/parse-image.ts)'s `parseImage(image: Blob): Promise<ParseImageResult>` runs real OCR — [TrOCR](https://huggingface.co/microsoft/trocr-base-handwritten) (the `Xenova/trocr-base-handwritten` checkpoint) via [`@huggingface/transformers`](https://github.com/huggingface/transformers.js), loaded once per server process and reused across requests. The upload UI is wired up end to end: an uploaded image POSTs to `/api/parse-image`, and on success the returned `pgn` string feeds through the exact same path `handleFile` uses for `.pgn` uploads (`/api/parse-pgn` → `lib/parse-pgn.ts`'s `parsePgn`) — a recognized game renders and steps through identically either way. What's missing is recognition *accuracy* on real scoresheets, not wiring:
+**Current state**: [lib/parse-image.ts](lib/parse-image.ts)'s `parseImage(image: Blob): Promise<ParseImageResult>` sends the whole photographed scoresheet to the Gemini API (`gemini-flash-latest`) in one call, prompted to return a JSON array of SAN move strings in play order. This works because a general vision model — unlike a single-line handwriting recognizer — understands document layout well enough to locate the White/Black columns itself; no cropping or per-cell processing is needed. The recognized move list is then run through the same legal-move matching used elsewhere (`bestLegalMoveMatch` in [lib/recognize-scoresheet.ts](lib/recognize-scoresheet.ts): each reading is matched against the actual legal moves at the position reached so far, correcting minor misreads and stopping at the first move that isn't a confident match). The upload UI is wired up end to end: an uploaded image POSTs to `/api/parse-image`, and on success the returned `pgn` string feeds through the exact same path `handleFile` uses for `.pgn` uploads.
 
-- **Segment the scoresheet before recognizing it**: TrOCR is a *single-line* handwriting recognizer — one call reads one line of text, with no concept of a scoresheet's row/column structure. Run directly on a full photo, it transcribes *something*, but that something won't parse as a real game (verified: feeding it [transformers.js's own documented sample image](https://huggingface.co/datasets/Xenova/transformers.js-docs/resolve/main/handwriting.jpg) correctly recognized the exact expected text, "Mr. Brown commented icily." — the model works, it's just reading a line, not a page). Getting real scoresheets working needs a step before OCR that locates the sheet and crops it into one image per move (a fixed printed template with numbered rows — e.g. the standard US Chess scoresheet form — is a more tractable starting target than an arbitrary handwritten page, since the row/column layout is known in advance), each crop recognized independently, then reassembled — and likely legal-move validation (chess.js already generates the legal moves at each position) to correct low-confidence reads, rather than trusting raw OCR output directly.
-- **Accuracy note**: recognition quality depends heavily on how close the input is to what the model was trained on. It performed well on the reference sample above; a synthetic image of clean rendered text ("1. e4 e5" in a cursive-style font) was recognized far less accurately ("1.445") — real handwriting and printed/rendered text are different distributions for this model, so testing with the latter is not a good proxy for the former.
+**Accuracy**: tested against a real filled-in scoresheet — [`__tests__/fixtures/1963-round21.jpg`](__tests__/fixtures/1963-round21.jpg), hand-transcribed from Round 21 of the 1963 World Championship match, with the known-correct game at [`__tests__/fixtures/1963-round21.pgn`](__tests__/fixtures/1963-round21.pgn) — one call to `/api/parse-image` recognized the full 19-move game correctly (`1.c4 Nf6 2.Nf3 g6 3.Nc3 d5 4.cxd5 Nxd5 5.e4 Nxc3 6.dxc3 Qxd1+ 7.Kxd1 Bg4 8.Be2 Nd7 9.Be3 e5 10.Nd2`) in about 11 seconds, no manual cropping needed.
 
-  Tested against a real filled-in scoresheet — [`__tests__/fixtures/1963-round21.jpg`](__tests__/fixtures/1963-round21.jpg), hand-transcribed from Round 21 of the 1963 World Championship match, with the known-correct game at [`__tests__/fixtures/1963-round21.pgn`](__tests__/fixtures/1963-round21.pgn) — cropped to individual moves:
+**Two alternatives were tried and rejected before landing here**, in this order:
 
-  | Crop | Correct | Recognized |
-  |---|---|---|
-  | isolated "c4" | `c4` | `c4-` |
-  | isolated "Nf3" | `Nf3` | `NF3` |
-  | isolated "Nf6" | `Nf6` | `NFC 2` |
-  | "c4"+"Nf6" (one row, both columns) | `c4 Nf6` | `c 4000I NFC.` |
-  | "Nf3"+"g6" (one row, both columns) | `Nf3 g6` | `NF3-1963` |
+1. **TrOCR** (`Xenova/trocr-base-handwritten` via `@huggingface/transformers`, run locally): a single-line handwriting recognizer with no concept of a scoresheet's row/column structure. Run on a full photo it transcribes *something* that doesn't parse as a real game. Getting it working would have needed a step before OCR to locate the sheet and crop it into one image per move (see `lib/segment-scoresheet.ts`, still present and still tested, though no longer wired into `parseImage`) — and even isolated single-move crops only got *close* (`c4` → `c4-`, `Nf3` → `NF3`), not exact.
+2. **A local vision-language model** (MiniCPM-V 8B via Ollama, run in Docker, whole image, no segmentation): this Mac is Intel with no GPU, so inference ran on CPU only — one call took **~5 minutes** and recognized just the first two moves correctly before diverging into wrong moves and at least one illegal token. Local small VLMs are a meaningfully weaker fit for messy handwriting than cloud vision models, and CPU-only inference at a size good enough to compete isn't practical here.
 
-  Two findings drove picking `base` over `small` here: `small` produced fluent-but-completely-unrelated hallucinated text (e.g. Wikipedia-sidebar-style phrases) on this handwriting even on cleanly isolated crops — not close misses, just wrong. `base` got close on isolated single-move crops (near-miss errors like a stray trailing character or wrong letter case, both cheap to clean up before validation) but did notably worse when a crop spanned both the White and Black columns in one row — concrete evidence that segmentation should crop to individual moves, not full rows.
+Gemini's free tier resolved both problems at once: no segmentation needed, and a single call recovered the real game exactly.
 
 **The `ParseImageResult` contract stays the same regardless of what's inside `parseImage`**:
 
@@ -77,12 +71,9 @@ export type ParseImageResult =
 
 ## Dependency Notes
 
-`npm install` pulls in a few packages with postinstall scripts (native binary downloads for `onnxruntime-node`, `fsevents`, and native-resolver helpers for `protobufjs`/`unrs-resolver`) that this project gates behind an `allowScripts` allowlist in `package.json` — approve them if prompted (`npm approve-scripts <pkg>`); each one was reviewed before being allowed.
+`npm install` pulls in a few packages with postinstall scripts (native binary downloads for `chess.js`/`fsevents`, and a native-resolver helper for `unrs-resolver`) that this project gates behind an `allowScripts` allowlist in `package.json` — approve them if prompted (`npm approve-scripts <pkg>`); each one was reviewed before being allowed.
 
-`package.json`'s `overrides` pin two things that would otherwise resolve to versions with real problems:
-
-- `sharp` → `^0.35.3`: `@huggingface/transformers` pulls in a `sharp` version with a [known high-severity vulnerability](https://github.com/advisories/GHSA-f88m-g3jw-g9cj) in its underlying image library. This matters here specifically because `sharp` processes **untrusted user-uploaded images** at runtime — not a theoretical concern to wave off.
-- `onnxruntime-node` → `1.23.0`: the version `@huggingface/transformers` depends on by default (`1.24.3`) dropped prebuilt binaries for `darwin-x64` (Intel Macs) — the package installs but throws at import time on that platform. `1.23.0` is the last version that still bundles it.
+`sharp` is a direct dependency (used by `lib/segment-scoresheet.ts`) rather than an incidental transitive one, since it processes **untrusted user-uploaded images** at runtime — worth pinning deliberately rather than getting whatever version another package happens to pull in.
 
 ## Learn More
 

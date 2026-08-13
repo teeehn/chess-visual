@@ -1,76 +1,110 @@
-// Model loading is expensive and network-dependent, so @huggingface/transformers
-// is mocked here — these tests exercise parseImage's own logic (recognized
-// text → PGN validation → result shape), not the real model's accuracy.
-jest.mock("@huggingface/transformers", () => ({
-  pipeline: jest.fn(),
-}));
+/**
+ * @jest-environment node
+ */
+// Gemini is called via plain fetch, so the network call itself is mocked
+// here — these tests exercise parseImage's own logic (recognized move list
+// -> legal-move matching -> PGN/result shape), not the real model's
+// accuracy against real handwriting (see the README for that).
+import { parseImage } from "@/lib/parse-image";
 
-// parseImage caches its pipeline in a module-level singleton (so the real
-// model only loads once per server process, not per request). That's
-// exactly what we want in production but means tests need a fresh module
-// instance each time, or they'd all share one test's mock after the first
-// call. Re-import both the mock and the module under test together after
-// resetModules so they stay in sync.
-async function loadParseImage() {
-  jest.resetModules();
-  const { pipeline } = await import("@huggingface/transformers");
-  const { parseImage } = await import("@/lib/parse-image");
-  return { parseImage, mockPipeline: pipeline as jest.Mock };
+function mockGeminiResponse(text: string, status = 200) {
+  global.fetch = jest.fn().mockResolvedValue({
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => ({
+      candidates: [{ content: { parts: [{ text }] } }],
+    }),
+  }) as jest.Mock;
 }
 
-function mockRecognizedText(text: string) {
-  return jest.fn().mockResolvedValue([{ generated_text: text }]);
-}
+const REAL_IMAGE_BLOB = new Blob(["fake-image-bytes"], { type: "image/jpeg" });
 
 describe("parseImage", () => {
-  it("returns the recognized text as PGN when it parses as a valid game", async () => {
-    const { parseImage, mockPipeline } = await loadParseImage();
-    mockPipeline.mockResolvedValue(
-      mockRecognizedText("1. e4 e5 2. Nf3 Nc6 1-0"),
-    );
+  const originalApiKey = process.env.GEMINI_API_KEY;
 
-    const result = await parseImage(
-      new Blob(["fake-image-bytes"], { type: "image/png" }),
-    );
-
-    expect(result).toEqual({ ok: true, pgn: "1. e4 e5 2. Nf3 Nc6 1-0" });
+  beforeEach(() => {
+    process.env.GEMINI_API_KEY = "test-api-key";
   });
 
-  it("returns an error including the raw recognized text when it isn't a valid game", async () => {
-    const { parseImage, mockPipeline } = await loadParseImage();
-    mockPipeline.mockResolvedValue(mockRecognizedText("Mr. Brown commented icily."));
+  afterEach(() => {
+    process.env.GEMINI_API_KEY = originalApiKey;
+    jest.restoreAllMocks();
+  });
 
-    const result = await parseImage(
-      new Blob(["fake-image-bytes"], { type: "image/png" }),
-    );
+  it("assembles a valid PGN from a clean recognized move list", async () => {
+    mockGeminiResponse('["c4","Nf6","Nf3","g6"]');
+
+    const result = await parseImage(REAL_IMAGE_BLOB);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.pgn).toContain("1. c4 Nf6 2. Nf3 g6");
+  });
+
+  it("tolerates the response being wrapped in prose or a code fence", async () => {
+    mockGeminiResponse('Here you go:\n```json\n["c4","Nf6"]\n```');
+
+    const result = await parseImage(REAL_IMAGE_BLOB);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.pgn).toContain("1. c4 Nf6");
+  });
+
+  it("corrects near-miss readings via legal-move matching", async () => {
+    // Same real near-misses validated in recognize-scoresheet.test.ts.
+    mockGeminiResponse('["c4-","Nf6","NF3"]');
+
+    const result = await parseImage(REAL_IMAGE_BLOB);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.pgn).toContain("1. c4 Nf6 2. Nf3");
+  });
+
+  it("returns an error when nothing in the response matches a legal move", async () => {
+    mockGeminiResponse('["totally wrong garbage"]');
+
+    const result = await parseImage(REAL_IMAGE_BLOB);
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toContain("Mr. Brown commented icily.");
+    expect(result.error).toMatch(/Could not recognize any moves/);
   });
 
-  it("returns an error when no text is recognized", async () => {
-    const { parseImage, mockPipeline } = await loadParseImage();
-    mockPipeline.mockResolvedValue(mockRecognizedText("   "));
+  it("returns an error when the response isn't a JSON array", async () => {
+    mockGeminiResponse("I couldn't read this image clearly.");
 
-    const result = await parseImage(
-      new Blob(["fake-image-bytes"], { type: "image/png" }),
-    );
+    const result = await parseImage(REAL_IMAGE_BLOB);
 
-    expect(result).toEqual({
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/Could not recognize any moves/);
+  });
+
+  it("returns an error when the API request fails", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
       ok: false,
-      error: "Could not recognize any text in the image.",
-    });
+      status: 503,
+      json: async () => ({}),
+    }) as jest.Mock;
+
+    const result = await parseImage(REAL_IMAGE_BLOB);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/503/);
   });
 
-  it("loads the model pipeline only once across multiple calls", async () => {
-    const { parseImage, mockPipeline } = await loadParseImage();
-    mockPipeline.mockResolvedValue(mockRecognizedText("1. e4 1-0"));
+  it("returns an error when GEMINI_API_KEY isn't configured", async () => {
+    delete process.env.GEMINI_API_KEY;
+    global.fetch = jest.fn();
 
-    const blob = new Blob(["fake-image-bytes"], { type: "image/png" });
-    await parseImage(blob);
-    await parseImage(blob);
+    const result = await parseImage(REAL_IMAGE_BLOB);
 
-    expect(mockPipeline).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/GEMINI_API_KEY/);
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });
