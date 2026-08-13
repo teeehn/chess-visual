@@ -13,7 +13,7 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-The first call to `/api/parse-image` downloads and initializes the OCR model (tens of seconds); it's cached in memory after that for the life of the server process, so subsequent calls are fast. `npm install` also needs to run a couple of postinstall scripts (native binary downloads) — if you're prompted about pending scripts, see [Dependency notes](#dependency-notes).
+The first call to `/api/parse-image` downloads and initializes the OCR model (`Xenova/trocr-base-handwritten`, ~1.3GB — expect the first request to take up to a minute); it's cached in memory after that for the life of the server process, so subsequent calls are fast. The download itself is cached on disk too, but inside `node_modules/@huggingface/transformers/.cache/`, so it's wiped and re-downloaded whenever `node_modules` is reinstalled. `npm install` also needs to run a couple of postinstall scripts (native binary downloads) — if you're prompted about pending scripts, see [Dependency notes](#dependency-notes).
 
 ## Usage
 
@@ -48,11 +48,23 @@ PGN parsing intentionally happens server-side rather than in the browser — `pa
 
 ## Handwritten Scoresheet Recognition
 
-**Current state**: [lib/parse-image.ts](lib/parse-image.ts)'s `parseImage(image: Blob): Promise<ParseImageResult>` runs real OCR — [TrOCR](https://huggingface.co/microsoft/trocr-base-handwritten) (the `Xenova/trocr-small-handwritten` checkpoint) via [`@huggingface/transformers`](https://github.com/huggingface/transformers.js), loaded once per server process and reused across requests. It is not yet wired up to the upload UI (`app/page.tsx`'s `handleImage` still only shows a preview), and it does not yet reliably turn a full scoresheet photo into a valid game. Both are real, scoped next steps, not "figure it out from scratch":
+**Current state**: [lib/parse-image.ts](lib/parse-image.ts)'s `parseImage(image: Blob): Promise<ParseImageResult>` runs real OCR — [TrOCR](https://huggingface.co/microsoft/trocr-base-handwritten) (the `Xenova/trocr-base-handwritten` checkpoint) via [`@huggingface/transformers`](https://github.com/huggingface/transformers.js), loaded once per server process and reused across requests. It is not yet wired up to the upload UI (`app/page.tsx`'s `handleImage` still only shows a preview), and it does not yet reliably turn a full scoresheet photo into a valid game. Both are real, scoped next steps, not "figure it out from scratch":
 
 - **Wire up the client**: POST the uploaded file to `/api/parse-image`, and on success feed the returned `pgn` string through the same path `handleFile` already uses for `.pgn` uploads (`/api/parse-pgn` → `lib/parse-pgn.ts`'s `parsePgn`). [app/api/parse-image/route.ts](app/api/parse-image/route.ts) already handles the HTTP side (validates the request, calls `parseImage`, maps the result to `200`/`400`) and shouldn't need to change for this.
 - **Segment the scoresheet before recognizing it**: TrOCR is a *single-line* handwriting recognizer — one call reads one line of text, with no concept of a scoresheet's row/column structure. Run directly on a full photo, it transcribes *something*, but that something won't parse as a real game (verified: feeding it [transformers.js's own documented sample image](https://huggingface.co/datasets/Xenova/transformers.js-docs/resolve/main/handwriting.jpg) correctly recognized the exact expected text, "Mr. Brown commented icily." — the model works, it's just reading a line, not a page). Getting real scoresheets working needs a step before OCR that locates the sheet and crops it into one image per move (a fixed printed template with numbered rows — e.g. the standard US Chess scoresheet form — is a more tractable starting target than an arbitrary handwritten page, since the row/column layout is known in advance), each crop recognized independently, then reassembled — and likely legal-move validation (chess.js already generates the legal moves at each position) to correct low-confidence reads, rather than trusting raw OCR output directly.
-- **Accuracy note**: recognition quality depends heavily on how close the input is to what the model was trained on. It performed well on the real handwriting sample above; a synthetic image of clean rendered text ("1. e4 e5" in a cursive-style font) was recognized far less accurately ("1.445") — real handwriting and printed/rendered text are different distributions for this model, so testing with the latter is not a good proxy for the former.
+- **Accuracy note**: recognition quality depends heavily on how close the input is to what the model was trained on. It performed well on the reference sample above; a synthetic image of clean rendered text ("1. e4 e5" in a cursive-style font) was recognized far less accurately ("1.445") — real handwriting and printed/rendered text are different distributions for this model, so testing with the latter is not a good proxy for the former.
+
+  Tested against a real filled-in scoresheet — [`__tests__/fixtures/1963-round21.jpg`](__tests__/fixtures/1963-round21.jpg), hand-transcribed from Round 21 of the 1963 World Championship match, with the known-correct game at [`__tests__/fixtures/1963-round21.pgn`](__tests__/fixtures/1963-round21.pgn) — cropped to individual moves:
+
+  | Crop | Correct | Recognized |
+  |---|---|---|
+  | isolated "c4" | `c4` | `c4-` |
+  | isolated "Nf3" | `Nf3` | `NF3` |
+  | isolated "Nf6" | `Nf6` | `NFC 2` |
+  | "c4"+"Nf6" (one row, both columns) | `c4 Nf6` | `c 4000I NFC.` |
+  | "Nf3"+"g6" (one row, both columns) | `Nf3 g6` | `NF3-1963` |
+
+  Two findings drove picking `base` over `small` here: `small` produced fluent-but-completely-unrelated hallucinated text (e.g. Wikipedia-sidebar-style phrases) on this handwriting even on cleanly isolated crops — not close misses, just wrong. `base` got close on isolated single-move crops (near-miss errors like a stray trailing character or wrong letter case, both cheap to clean up before validation) but did notably worse when a crop spanned both the White and Black columns in one row — concrete evidence that segmentation should crop to individual moves, not full rows.
 
 **The `ParseImageResult` contract stays the same regardless of what's inside `parseImage`**:
 
