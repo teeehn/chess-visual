@@ -13,12 +13,14 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
+`/api/parse-image` (recognizing a photographed scoresheet) calls the Gemini API and needs a `GEMINI_API_KEY` in `.env.local` — get a free key from [Google AI Studio](https://aistudio.google.com/apikey). Without one, PGN/text uploads still work; image uploads return an error. `npm install` also needs to run a couple of postinstall scripts (native binary downloads) — if you're prompted about pending scripts, see [Dependency notes](#dependency-notes).
+
 ## Usage
 
 1. **Upload a file** — click the dashed upload area and choose a `.pgn`/`.txt` file, or an image (`.png`, `.jpg`, `.heic`, etc.).
 2. **PGN files** are parsed and the game loads at the starting position, along with any header metadata the file contains (Event, Site, Date, players, ratings, ECO code, and so on — see [lib/pgn-metadata.ts](lib/pgn-metadata.ts) for the full recognized tag set). Blank or placeholder fields (chess.js's `"?"` / `"????.??.??"` defaults for tags the file never set) are hidden rather than shown.
 3. **Step through the game** using the `|<` `<` `>` `>|` buttons, the left/right arrow keys, or by clicking any move directly in the move list. The status line above the board shows the last move played and whose turn is next, and on the final move shows how the game ended (checkmate, stalemate, a specific draw reason, or resignation) instead.
-4. **Image files** currently show a preview with a "not implemented yet" placeholder — see below for the extension point.
+4. **Image files** show a preview and are sent for recognition (typically 5-15 seconds). If recognition produces a valid game, it loads and steps through exactly like a `.pgn` upload; if not, a specific error is shown. See [Handwritten Scoresheet Recognition](#handwritten-scoresheet-recognition) for how this works and its current accuracy.
 
 On wide screens the move list sits in a sidebar to the right of the board, top-aligned with it; on narrower screens it sits below the board, width-matched to the navigation controls.
 
@@ -39,32 +41,43 @@ Tests are organized under `__tests__/`, mirroring the source layout:
 
 - `app/page.tsx` — the client component: upload UI, board, move navigation, move list.
 - `app/api/parse-pgn/route.ts` — parses uploaded PGN text server-side and returns moves/metadata/game-ending info as JSON.
-- `app/api/parse-image/route.ts` — accepts an uploaded image; currently a stub (see below).
+- `app/api/parse-image/route.ts` — accepts an uploaded image and recognizes its moves server-side.
 - `lib/` — framework-agnostic logic used by both the route handlers and their tests: `parse-pgn.ts`, `pgn-metadata.ts`, `game-ending.ts`, `parse-image.ts`.
 
 PGN parsing intentionally happens server-side rather than in the browser — `page.tsx` doesn't import chess.js at all; it just posts the uploaded text to `/api/parse-pgn` and renders whatever comes back.
 
-## Extending: Handwritten Scoresheet Recognition
+## Handwritten Scoresheet Recognition
 
-The app already accepts an image upload in the UI and has a server route wired up for it, but the actual recognition (OCR/handwriting-to-moves) isn't implemented — this section documents *where that logic belongs and what it must return*, not how to build it.
+**Current state**: [lib/parse-image.ts](lib/parse-image.ts)'s `parseImage(image: Blob): Promise<ParseImageResult>` sends the whole photographed scoresheet to the Gemini API (`gemini-flash-lite-latest`) in one call, prompted to return a JSON object with the move list, the game result, and any other filled-in header fields (Event, Date, Round, players' names/ratings, etc. — see `RECOGNIZABLE_HEADER_TAGS` in [lib/recognize-scoresheet.ts](lib/recognize-scoresheet.ts) for the full recognized set). This works because a general vision model — unlike a single-line handwriting recognizer — understands document layout well enough to locate the White/Black columns and header boxes itself; no cropping or per-cell processing is needed. The recognized move list is then run through legal-move matching in [lib/recognize-scoresheet.ts](lib/recognize-scoresheet.ts) (`bestLegalMoveMatch`/`assembleGameFromRecognizedCells`): each reading is matched against the actual legal moves at the position reached so far, correcting minor misreads, and stopping at the first move that isn't a confident match (see **Stopping instead of guessing** below); the result and other headers are only written into the PGN if they're recognizable values (a valid PGN result token; a known header tag), not trusted blindly. Transient Gemini errors (503 "overloaded", 429 rate-limited) are retried with a short backoff before giving up. The upload UI is wired up end to end: an uploaded image POSTs to `/api/parse-image`, and on success the returned `pgn` string feeds through the exact same path `handleFile` uses for `.pgn` uploads.
 
-**Where to add it**: [lib/parse-image.ts](lib/parse-image.ts), inside `parseImage(image: Blob): Promise<ParseImageResult>`. This is the single function the rest of the app depends on — everything upstream and downstream of it is already built and shouldn't need to change:
+**Accuracy**: tested against a real filled-in scoresheet — [`__tests__/fixtures/1963-round21.jpg`](__tests__/fixtures/1963-round21.jpg), hand-transcribed from Round 21 of the 1963 World Championship match, with the known-correct game at [`__tests__/fixtures/1963-round21.pgn`](__tests__/fixtures/1963-round21.pgn) — one call to `/api/parse-image` recognized the full 19-move game, the `1/2-1/2` result, and the `Round 21` header correctly (`1.c4 Nf6 2.Nf3 g6 3.Nc3 d5 4.cxd5 Nxd5 5.e4 Nxc3 6.dxc3 Qxd1+ 7.Kxd1 Bg4 8.Be2 Nd7 9.Be3 e5 10.Nd2 1/2-1/2`) in about 3 seconds.
 
-- [app/api/parse-image/route.ts](app/api/parse-image/route.ts) already handles the HTTP side: validates the incoming `multipart/form-data` request, extracts the `image` field, calls `parseImage`, and maps its result to the right status code (`200` for success, `501` while it's still a stub, `400` for a malformed request). A real implementation replacing the stub body doesn't require touching this file unless the request/response contract itself changes.
-- The client (`app/page.tsx`'s `handleImage`) currently only shows an image preview and a placeholder message — it does not yet call `/api/parse-image`. Wiring that up is a separate, small step once `parseImage` does something real: POST the file to `/api/parse-image`, and on success feed the returned PGN text through the exact same path `handleFile` already uses for uploaded `.pgn` files (i.e. `/api/parse-pgn` — see `lib/parse-pgn.ts`'s `parsePgn`). No new move-parsing logic is needed for images; recognition only needs to produce PGN text, and the existing pipeline takes it from there.
+**Stopping instead of guessing**: two kinds of unresolvable move showed up testing against longer, messier real games (38, 53, and more full moves). First, a player very often omits SAN disambiguation even when chess.js's own move list requires it (writing "Nf3" when two knights can legally reach f3, so the actual legal move strings are "Ngf3"/"Ndf3") — a genuine tie between candidates, not something the written text itself resolves. Second, Gemini can misread a letter badly enough that the result matches no legal move at all (found on a real scoresheet: a `c` consistently misread as `e`, e.g. "Nxc1" read as "Nxe1", which doesn't match anything since nothing had ever moved to e1). A lookahead-based approach was tried for the first case — guessing whichever tied candidate let recognition continue furthest over the next 24 cells — and did resolve some real ties correctly, but wasn't reliable enough on messy games with several compounding misreads (it could pick a plausible-looking but wrong candidate and silently continue down the wrong branch). Rolled back: both cases are now treated the same way, stopping recognition at that cell rather than guessing. Since a stop-early result with no indication anything was cut short is worse than an explicit one, `parseImage` compares how many moves it recognized against how many Gemini actually returned; on a mismatch it still loads the game up to that point but adds a `warning` naming the exact move number, color, and raw text that didn't match, shown in the UI in amber — fixable (correct that cell on the sheet, or re-photograph it) rather than a silent gap. For evaluation, prefer clearly-written scoresheets over very messy ones.
 
-**What `parseImage` must return** — the `ParseImageResult` type already defines the contract:
+**Model choice**: `gemini-flash-lite-latest` over the full `gemini-flash-latest` — the full model's free-tier quota for this project turned out to be a mere 20 requests/day (hit during testing; confirmed via the API's own `RESOURCE_EXHAUSTED` error body, which named `GenerateRequestsPerDayPerProjectPerModel-FreeTier` with `quotaValue: 20`), nowhere near enough for real use, and manifested as two back-to-back uploads both failing (one with 503, one with 429 — Gemini's free tier returns either depending on which limit you hit). The lite model has separate, far more generous quota — confirmed via [AI Studio's rate-limit dashboard](https://aistudio.google.com/rate-limit): **15 requests/minute, ~300K input tokens/minute, 500 requests/day** for `gemini-3.5-flash-lite` (25x the full model's daily cap) — and, on the real fixture, was both faster (~3s vs ~10s+, likely because it skips the full model's extended "thinking" step by default) and matched it exactly, including the result — no accuracy tradeoff observed here.
+
+**Two alternatives were tried and rejected before landing here**, in this order:
+
+1. **TrOCR** (`Xenova/trocr-base-handwritten` via `@huggingface/transformers`, run locally): a single-line handwriting recognizer with no concept of a scoresheet's row/column structure. Run on a full photo it transcribes *something* that doesn't parse as a real game. Getting it working would have needed a step before OCR to locate the sheet and crop it into one image per move (see `lib/segment-scoresheet.ts`, still present and still tested, though no longer wired into `parseImage`) — and even isolated single-move crops only got *close* (`c4` → `c4-`, `Nf3` → `NF3`), not exact.
+2. **A local vision-language model** (MiniCPM-V 8B via Ollama, run in Docker, whole image, no segmentation): this Mac is Intel with no GPU, so inference ran on CPU only — one call took **~5 minutes** and recognized just the first two moves correctly before diverging into wrong moves and at least one illegal token. Local small VLMs are a meaningfully weaker fit for messy handwriting than cloud vision models, and CPU-only inference at a size good enough to compete isn't practical here.
+
+Gemini's free tier resolved both problems at once: no segmentation needed, and a single call recovered the real game exactly.
+
+**The `ParseImageResult` contract stays the same shape regardless of what's inside `parseImage`**:
 
 ```ts
 export type ParseImageResult =
-  | { ok: true; pgn: string }
+  | { ok: true; pgn: string; warning?: string }
   | { ok: false; error: string };
 ```
 
-- On success: `{ ok: true, pgn }`, where `pgn` is a **valid PGN string** — movetext (SAN moves) is required; header tags (`[Event ...]`, etc.) are optional but supported if extracted. It does not need to be a *correct* transcription of the photo to satisfy the contract, only syntactically valid PGN that `lib/parse-pgn.ts`'s `parsePgn()` can parse — accuracy is the implementation's problem, not the interface's.
-- On failure: `{ ok: false, error }`, where `error` is a short, user-facing message (shown directly in the UI's error area, the same way PGN parse errors are). Use this for "couldn't read the image," "no moves detected," partial-confidence failures, or any other case where you don't have usable PGN to return — not for exceptions, which should still be thrown/caught normally.
+`{ ok: true, pgn }` requires `pgn` to be syntactically valid PGN movetext that `parsePgn()` can parse — not necessarily a *correct* transcription, just well-formed; accuracy is the recognizer's problem, not the interface's. The optional `warning` flags a partial recognition (see above) without treating it as a failure. `{ ok: false, error }` takes a short, user-facing message, shown directly in the UI's error area the same way PGN parse errors are.
 
-This keeps recognition swappable — whatever approach ends up implementing `parseImage` (a hosted OCR API, a self-hosted model, a call to another service) only needs to satisfy this one function signature; nothing else in the app needs to know how it works.
+## Dependency Notes
+
+`npm install` pulls in a few packages with postinstall scripts (native binary downloads for `chess.js`/`fsevents`, and a native-resolver helper for `unrs-resolver`) that this project gates behind an `allowScripts` allowlist in `package.json` — approve them if prompted (`npm approve-scripts <pkg>`); each one was reviewed before being allowed.
+
+`sharp` is a direct dependency (used by `lib/segment-scoresheet.ts`) rather than an incidental transitive one, since it processes **untrusted user-uploaded images** at runtime — worth pinning deliberately rather than getting whatever version another package happens to pull in.
 
 ## Learn More
 
