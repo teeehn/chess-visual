@@ -76,6 +76,25 @@ describe("image upload", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows a warning and still loads the game when recognition stops partway through", async () => {
+    mockImageUploadFetch({
+      ok: true,
+      pgn: "1. e4 e5 1-0",
+      warning:
+        'Recognition stopped at move 2 (White): "totally wrong garbage" ' +
+        "didn't match a legal move there. The game loaded up to that " +
+        "point — check that move on the scoresheet.",
+    });
+    render(<Home />);
+    await uploadFile(makeImageFile("scoresheet.png"));
+
+    expect(await screen.findByText("Loaded: scoresheet.png")).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Recognition stopped at move 2 \(White\)/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next >" })).toBeInTheDocument();
+  });
+
   it("shows a generic error when the image recognition service is unreachable", async () => {
     global.fetch = jest.fn().mockRejectedValue(new Error("network down"));
     render(<Home />);

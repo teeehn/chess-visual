@@ -63,15 +63,17 @@ PGN parsing intentionally happens server-side rather than in the browser — `pa
 
 Gemini's free tier resolved both problems at once: no segmentation needed, and a single call recovered the real game exactly.
 
-**The `ParseImageResult` contract stays the same regardless of what's inside `parseImage`**:
+**Messy scoresheets can still cause a real misread that legal-move matching can't recover from** — not the disambiguation case above (that's resolved), but Gemini itself reading a letter wrong badly enough that the result doesn't correspond to any legal move at all (found testing a third real scoresheet: a `c` consistently misread as `e`, e.g. "Nxc1" read as "Nxe1", which doesn't match anything since nothing had ever moved to e1). Rather than silently returning a truncated game with no indication anything was cut short, `parseImage` compares how many moves it recognized against how many Gemini actually returned: if they differ, it reports exactly where and why in a `warning`, shown in the UI in amber below the board — the game still loads up to that point, so the mismatch is fixable (correct that cell on the sheet, or re-photograph it) rather than a silent gap. Deliberately scoped here: making recognition itself more robust against specific letter-confusions is future work, not attempted now — for evaluation, prefer clearly-written scoresheets over very messy ones.
+
+**The `ParseImageResult` contract stays the same shape regardless of what's inside `parseImage`**:
 
 ```ts
 export type ParseImageResult =
-  | { ok: true; pgn: string }
+  | { ok: true; pgn: string; warning?: string }
   | { ok: false; error: string };
 ```
 
-`{ ok: true, pgn }` requires `pgn` to be syntactically valid PGN movetext that `parsePgn()` can parse — not necessarily a *correct* transcription, just well-formed; accuracy is the recognizer's problem, not the interface's. `{ ok: false, error }` takes a short, user-facing message, shown directly in the UI's error area the same way PGN parse errors are.
+`{ ok: true, pgn }` requires `pgn` to be syntactically valid PGN movetext that `parsePgn()` can parse — not necessarily a *correct* transcription, just well-formed; accuracy is the recognizer's problem, not the interface's. The optional `warning` flags a partial recognition (see above) without treating it as a failure. `{ ok: false, error }` takes a short, user-facing message, shown directly in the UI's error area the same way PGN parse errors are.
 
 ## Dependency Notes
 

@@ -4,7 +4,7 @@ import {
 } from "./recognize-scoresheet";
 
 export type ParseImageResult =
-  | { ok: true; pgn: string }
+  | { ok: true; pgn: string; warning?: string }
   | { ok: false; error: string };
 
 // Gemini reads the whole photographed scoresheet directly rather than
@@ -206,5 +206,21 @@ export async function parseImage(image: Blob): Promise<ParseImageResult> {
     };
   }
 
-  return { ok: true, pgn };
+  // Gemini read more moves than we could confirm are legal — recognition
+  // stopped partway through rather than reaching a natural end (a blank
+  // cell, or the game's actual last move). Load what was recognized, but
+  // point at exactly where it stopped so the sheet can be checked/corrected
+  // there, rather than silently returning a truncated game with no signal
+  // anything was cut short.
+  let warning: string | undefined;
+  const stoppedAt = cells[movesRecognized];
+  if (stoppedAt && stoppedAt.text.trim()) {
+    const color = stoppedAt.color === "w" ? "White" : "Black";
+    warning =
+      `Recognition stopped at move ${stoppedAt.moveNumber} (${color}): ` +
+      `"${stoppedAt.text}" didn't match a legal move there. The game ` +
+      "loaded up to that point — check that move on the scoresheet.";
+  }
+
+  return { ok: true, pgn, ...(warning ? { warning } : {}) };
 }

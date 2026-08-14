@@ -113,6 +113,39 @@ describe("parseImage", () => {
     expect(result.pgn).toContain("1. c4 Nf6 2. Nf3");
   });
 
+  it("has no warning when every recognized move matched", async () => {
+    mockGeminiResponse('["c4","Nf6","Nf3","g6"]');
+
+    const result = await parseImage(REAL_IMAGE_BLOB);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.warning).toBeUndefined();
+  });
+
+  it("warns with the exact move number/color/text where recognition stopped, but still loads the partial game", async () => {
+    mockGeminiResponse('["c4","Nf6","totally wrong garbage","g6"]');
+
+    const result = await parseImage(REAL_IMAGE_BLOB);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.pgn).toContain("1. c4 Nf6");
+    expect(result.pgn).not.toContain("2.");
+    expect(result.warning).toContain("move 2 (White)");
+    expect(result.warning).toContain("totally wrong garbage");
+  });
+
+  it("has no warning when the sheet just legitimately ends (blank trailing cell)", async () => {
+    mockGeminiResponse('["c4","Nf6",""]');
+
+    const result = await parseImage(REAL_IMAGE_BLOB);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.warning).toBeUndefined();
+  });
+
   it("returns an error when nothing in the response matches a legal move", async () => {
     mockGeminiResponse('["totally wrong garbage"]');
 

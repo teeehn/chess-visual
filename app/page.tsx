@@ -15,6 +15,7 @@ export default function Home() {
   const [moves, setMoves] = useState<PlyMove[]>([]);
   const [currentPly, setCurrentPly] = useState(-1); // -1 = starting position
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [gameEndText, setGameEndText] = useState<string | null>(null);
@@ -45,6 +46,7 @@ export default function Home() {
     setGameEndText(null);
     setMetadata([]);
     setError(message);
+    setWarning(null);
   }
 
   // Shared by both upload paths: given PGN text (read from a .pgn file, or
@@ -95,6 +97,7 @@ export default function Home() {
   const handleFile = useCallback(
     async (file: File) => {
       setError(null);
+      setWarning(null);
       setImagePreviewUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
         return null;
@@ -112,6 +115,7 @@ export default function Home() {
   const handleImage = useCallback(
     async (file: File) => {
       setError(null);
+      setWarning(null);
       setMoves([]);
       setCurrentPly(-1);
       setFileName(file.name);
@@ -140,6 +144,7 @@ export default function Home() {
           return;
         }
 
+        setWarning(result.warning ?? null);
         await loadPgnText(result.pgn, file.name);
       } catch {
         setError("Could not reach the image recognition service.");
@@ -242,6 +247,9 @@ export default function Home() {
         <p className="text-sm text-gray-500 mt-2 mb-2">Loaded: {fileName}</p>
       )}
       {error && <p className="text-sm text-red-600 mt-2 mb-2">{error}</p>}
+      {warning && (
+        <p className="text-sm text-amber-600 mt-2 mb-2">{warning}</p>
+      )}
 
       {metadata.length > 0 && (
         <dl className="flex flex-wrap gap-x-4 gap-y-1 text-sm mt-2 mb-2 rounded border border-gray-200 p-3">
