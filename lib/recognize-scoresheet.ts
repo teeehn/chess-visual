@@ -35,11 +35,11 @@ function levenshtein(a: string, b: string): number {
 // This handles case normalization ("NF3" -> "Nf3") and minor OCR noise
 // ("c4-" -> "c4") the same way: whichever legal move(s) it's closest to.
 // Returns every move tied for closest — most of the time that's exactly
-// one, but a common real case is more than one: a player writes "Nf3"
-// without disambiguation even though two knights can legally reach f3, so
+// one, but a real case is more than one: a player writes "Nf3" without
+// disambiguation even though two knights can legally reach f3, so
 // chess.js's own move list has "Ngf3" and "Ndf3", both equidistant from
-// what was written. See assembleGameFromRecognizedCells for how ties are
-// resolved using the moves that follow, rather than guessed here.
+// what was written. bestLegalMoveMatch treats any real tie as "no
+// confident match" (see there for why) — this just finds the tied set.
 function candidateMoveMatches(rawText: string, legalMoves: string[]): string[] {
   const cleaned = rawText.trim();
   if (!cleaned || legalMoves.length === 0) return [];
@@ -69,11 +69,9 @@ function candidateMoveMatches(rawText: string, legalMoves: string[]): string[] {
   // letter (e.g. "Ke7" tied with "Nge7"/"Nce7" purely by edit-distance
   // coincidence, one substitution away) is a different piece entirely, not
   // a real ambiguity, so it's dropped whenever a same-letter candidate
-  // exists — otherwise later lookahead-based tie-breaking has no way to
-  // tell "which of two legal knights" from "misread the piece itself".
-  // Scoped to actual SAN piece letters specifically (not pawn moves, whose
-  // "leading letter" is just a file, or arbitrary non-chess text) so this
-  // doesn't reach past what the notation itself justifies.
+  // exists. Scoped to actual SAN piece letters specifically (not pawn
+  // moves, whose "leading letter" is just a file, or arbitrary non-chess
+  // text) so this doesn't reach past what the notation itself justifies.
   const SAN_PIECE_LETTERS = new Set(["n", "b", "r", "q", "k"]);
   if (SAN_PIECE_LETTERS.has(normalized[0])) {
     const sameLeadingChar = tied.filter(
@@ -115,81 +113,29 @@ const RECOGNIZABLE_HEADER_TAGS = new Set([
   "BlackElo",
 ]);
 
-// How far ahead to look, in cells, when breaking a tie between candidate
-// moves — e.g. resolving a blocked-castling dead end (see below) needs
-// enough lookahead to actually reach the castling move, which can be many
-// plies later. Bounded rather than exploring to the end of the game:
-// unbounded backtracking (trying every candidate and recursing through
-// *everything* after it) branches multiplicatively at every tie, and a
-// real ~40-move game can easily have several — measured this hang for
-// several minutes on a real scoresheet before bounding it.
-const TIE_BREAK_LOOKAHEAD = 24;
-
-// Greedily counts how many further cells match *something* legal, without
-// itself branching on ties (arbitrarily takes the first candidate at any
-// tie it meets) — a cheap, approximate probe used only to score candidates
-// at an outer tie, not a search for the true best continuation.
-function greedyMatchLength(
-  fen: string,
-  cells: RecognizedCell[],
-  index: number,
-  remaining: number,
-): number {
-  if (remaining <= 0 || index >= cells.length) return 0;
-
-  const chess = new Chess(fen);
-  const legalMoves = chess.moves();
-  if (legalMoves.length === 0) return 0;
-
-  const candidates = candidateMoveMatches(cells[index].text, legalMoves);
-  if (candidates.length === 0) return 0;
-
-  chess.move(candidates[0]);
-  return 1 + greedyMatchLength(chess.fen(), cells, index + 1, remaining - 1);
-}
-
-// Walks cells in order, matching each against the position reached so far.
-// When a cell has more than one tied candidate (see candidateMoveMatches —
-// e.g. a player writes "Nf3" without disambiguation even though two
-// knights can legally reach f3), picks whichever candidate leads to the
-// longest greedy continuation over the next TIE_BREAK_LOOKAHEAD cells,
-// rather than guessing at the ambiguous cell itself. This is what lets a
-// scoresheet with that kind of underspecified "Nf3" still resolve
-// correctly: the wrong knight typically leads to a dead end within a few
-// moves (it blocks a later castle, or can no longer reach a square the
-// sheet says it goes to), while the right one doesn't.
-function matchCellsWithTieBreaking(cells: RecognizedCell[]): string[] {
+// Walks cells in order, matching each against the position reached so far
+// via bestLegalMoveMatch, and stops at the first cell that doesn't
+// confidently match anything (including a genuine tie — see
+// candidateMoveMatches). An earlier version tried to resolve ties by
+// looking ahead and guessing whichever candidate let recognition continue
+// furthest; rolled back after finding it wasn't reliable enough on messy
+// real scoresheets (it could pick a plausible-looking but wrong candidate,
+// silently continuing the game on the wrong branch rather than surfacing
+// something the player should check). Stopping at a tie and reporting
+// exactly where (see parseImage's `warning`) is more honest than guessing.
+function matchCells(cells: RecognizedCell[]): string[] {
   const chess = new Chess();
   const matched: string[] = [];
 
-  for (let index = 0; index < cells.length; index++) {
+  for (const cell of cells) {
     const legalMoves = chess.moves();
     if (legalMoves.length === 0) break;
 
-    const candidates = candidateMoveMatches(cells[index].text, legalMoves);
-    if (candidates.length === 0) break;
+    const match = bestLegalMoveMatch(cell.text, legalMoves);
+    if (!match) break;
 
-    let chosen = candidates[0];
-    if (candidates.length > 1) {
-      let bestScore = -1;
-      for (const candidate of candidates) {
-        const trial = new Chess(chess.fen());
-        trial.move(candidate);
-        const score = greedyMatchLength(
-          trial.fen(),
-          cells,
-          index + 1,
-          TIE_BREAK_LOOKAHEAD,
-        );
-        if (score > bestScore) {
-          bestScore = score;
-          chosen = candidate;
-        }
-      }
-    }
-
-    chess.move(chosen);
-    matched.push(chosen);
+    chess.move(match);
+    matched.push(match);
   }
 
   return matched;
@@ -218,7 +164,7 @@ export function assembleGameFromRecognizedCells(
   result?: string,
   headers?: Record<string, string>,
 ): AssembledGame {
-  const matchedMoves = matchCellsWithTieBreaking(cells);
+  const matchedMoves = matchCells(cells);
   const chess = new Chess();
   for (const move of matchedMoves) chess.move(move);
   const movesRecognized = matchedMoves.length;
